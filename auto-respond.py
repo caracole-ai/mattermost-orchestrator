@@ -33,7 +33,21 @@ def main():
     orch.setup_channels()
     orch.setup_bots()
     
-    party_channel_id = orch.channels.get('party_mode')
+    # Récupérer dynamiquement le channel ID via l'API
+    team_id = orch.team_id
+    channels = orch.admin_client._request("GET", f"/teams/{team_id}/channels")
+    party_channel = None
+    for ch in channels:
+        if 'party' in ch.get('name', '').lower() or 'party' in ch.get('display_name', '').lower():
+            party_channel = ch
+            break
+    
+    if not party_channel:
+        logger.error("Channel party-mode introuvable !")
+        return
+    
+    party_channel_id = party_channel['id']
+    logger.info(f"✅ Surveillance du channel: {party_channel['display_name']} (ID: {party_channel_id[:8]}...)")
     
     global last_processed_post_id
     
@@ -55,15 +69,18 @@ def main():
             
             # Parcourir les posts dans l'ordre chronologique (inverse)
             for post_id in reversed(posts['order']):
+                post = posts['posts'][post_id]
+                
                 # Passer les posts déjà traités
                 if last_processed_post_id and post_id <= last_processed_post_id:
                     continue
                 
-                post = posts['posts'][post_id]
+                # Marquer comme traité immédiatement
+                last_processed_post_id = post_id
                 
-                # Ignorer les messages des bots
-                if post.get('props', {}).get('from_bot'):
-                    last_processed_post_id = post_id
+                # Ignorer les messages des bots (vérifier string "true")
+                from_bot = post.get('props', {}).get('from_bot')
+                if from_bot == 'true' or from_bot is True:
                     continue
                 
                 # Traiter uniquement les messages de Lio
@@ -87,8 +104,6 @@ def main():
                         time.sleep(2)
                     
                     logger.info("✅ Tous les agents ont répondu\n")
-                
-                last_processed_post_id = post_id
             
             time.sleep(5)  # Vérifier toutes les 5 secondes
             
