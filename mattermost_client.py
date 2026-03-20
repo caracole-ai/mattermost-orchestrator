@@ -129,13 +129,21 @@ class MattermostClient:
         logger.info(f"Création du bot {username}...")
         return self.create_bot(username, display_name, description)
     
-    def ensure_channel_exists(self, team_id: str, name: str, display_name: str, 
+    def ensure_channel_exists(self, team_id: str, name: str, display_name: str,
                              purpose: str = "", channel_type: str = "O") -> Optional[Dict]:
         """Récupère un channel existant ou le crée."""
         channel = self.get_channel_by_name(team_id, name)
         if channel:
             logger.info(f"Channel {name} existe déjà")
             return channel
-        
+
         logger.info(f"Création du channel {name}...")
         return self.create_channel(team_id, name, display_name, purpose, channel_type)
+
+    def get_posts_for_channel(self, channel_id: str, per_page: int = 60) -> Optional[Dict]:
+        """Récupère les posts d'un channel, ordonnés chronologiquement."""
+        return self._request("GET", f"/channels/{channel_id}/posts", params={"per_page": per_page})
+
+    def create_dm_channel(self, user_id_1: str, user_id_2: str) -> Optional[Dict]:
+        """Crée un channel de DM entre deux utilisateurs."""
+        return self._request("POST", "/channels/direct", json=[user_id_1, user_id_2])

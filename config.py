@@ -11,6 +11,15 @@ API_BASE = f"{MATTERMOST_URL}/api/v4"
 # Tokens (à remplir après création des bots)
 ADMIN_TOKEN = os.getenv("MATTERMOST_ADMIN_TOKEN", "")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
+TEAM_ID = os.getenv("MATTERMOST_TEAM_ID", "i5a897fmgj8ntqkkt5iy9q8hfr")
+
+# Paths
+OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "/Users/caracole/Documents/ObsidianVault")
+OPENCLAW_PATH = os.getenv("OPENCLAW_PATH", "/Users/caracole/.openclaw")
+OPENCLAW_AGENTS_FILE = os.path.join(OPENCLAW_PATH, "sources", "agents.json")
+
+# Pipeline (les agents sont pilotés par OpenClaw, pas d'appel API direct)
+PIPELINE_BUDGET_PER_AGENT = int(os.getenv("PIPELINE_BUDGET_PER_AGENT", "5"))
 
 # Agents
 AGENTS = {
