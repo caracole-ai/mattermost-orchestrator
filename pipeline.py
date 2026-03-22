@@ -32,7 +32,7 @@ class PipelineRunner:
     """
 
     def __init__(self, agent_ids: List[str] = None, budget_per_agent: int = None):
-        self.agent_ids = agent_ids or ["winston", "amelia", "manolo"]
+        self.agent_ids = agent_ids or ["winston", "amelia", "walid"]
         self.budget_per_agent = budget_per_agent or config.PIPELINE_BUDGET_PER_AGENT
         self.admin_client: Optional[MattermostClient] = None
         self.agents: List[PipelineAgent] = []
@@ -74,15 +74,19 @@ class PipelineRunner:
 
     def write_specs_to_obsidian(self, idea_metadata: Dict, synthesis: str,
                                 idea_filename: str) -> str:
-        """Écrit les specs dans Obsidian/Projets/."""
+        """Écrit specs + conversation dans Projets/<slug>/ (fichiers séparés)."""
         slug = self._slugify(idea_metadata.get('titre', 'pipeline-output'))
-        filename = f"{slug}-specs.md"
-        output_path = os.path.join(config.OBSIDIAN_VAULT_PATH, "Projets", filename)
+        project_dir = os.path.join(config.OBSIDIAN_VAULT_PATH, "Projets", slug)
+        os.makedirs(project_dir, exist_ok=True)
 
         now = datetime.now().isoformat(timespec='seconds')
         agent_names = [a.name for a in self.agents]
+        agents_line = ', '.join(f'{a.emoji} {a.name}' for a in self.agents)
+        date_human = datetime.now().strftime('%Y-%m-%d à %H:%M')
 
-        content = f"""---
+        # 1. specs.md — synthèse structurée uniquement
+        specs_path = os.path.join(project_dir, "specs.md")
+        specs_content = f"""---
 titre: "Specs — {idea_metadata.get('titre', 'Sans titre')}"
 type: specs
 source_idee: "{os.path.basename(idea_filename)}"
@@ -94,26 +98,42 @@ statut: brouillon
 
 # Specs : {idea_metadata.get('titre', 'Sans titre')}
 
-> Généré par le pipeline mattermost-orchestrator le {datetime.now().strftime('%Y-%m-%d à %H:%M')}
-> Agents : {', '.join(f'{a.emoji} {a.name}' for a in self.agents)}
+> Généré par le pipeline mattermost-orchestrator le {date_human}
+> Agents : {agents_line}
 
 {synthesis}
 
 ---
+*Généré automatiquement par pipeline.py*
+"""
+        with open(specs_path, 'w', encoding='utf-8') as f:
+            f.write(specs_content)
 
-## Conversation complète
+        # 2. conversation.md — retranscription complète des échanges
+        conv_path = os.path.join(project_dir, "conversation.md")
+        conv_content = f"""---
+type: conversation
+pipeline_date: "{now}"
+pipeline_agents:
+{chr(10).join(f'  - {name}' for name in agent_names)}
+---
+
+# Conversation pipeline : {idea_metadata.get('titre', 'Sans titre')}
+
+> {date_human} — {agents_line}
+> Budget : {self.budget_per_agent} messages par agent ({sum(self.message_counts.values())} total)
 
 """
         for msg in self.conversation_history:
-            content += f"### {msg['agent_emoji']} {msg['agent_name']} ({msg['agent_role']}) — Message {msg['message_number']}/{self.budget_per_agent}\n\n"
-            content += f"{msg['content']}\n\n"
+            conv_content += f"## {msg['agent_emoji']} {msg['agent_name']} ({msg['agent_role']}) — Message {msg['message_number']}/{self.budget_per_agent}\n\n"
+            conv_content += f"{msg['content']}\n\n"
 
-        content += "---\n*Généré automatiquement par pipeline.py*\n"
+        conv_content += "---\n*Généré automatiquement par pipeline.py*\n"
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+        with open(conv_path, 'w', encoding='utf-8') as f:
+            f.write(conv_content)
 
-        return output_path
+        return specs_path
 
     # === Mattermost ===
 
@@ -253,6 +273,41 @@ statut: brouillon
                 msg_total = sum(self.message_counts.values())
                 logger.info(f"  ✅ {agent.emoji} {agent.name} — message {self.message_counts[agent.id]}/{self.budget_per_agent} (total: {msg_total}/{total_messages})")
 
+    def load_specs_skeleton(self) -> str:
+        """Charge les sections specs du template projet (exclut les sections build-time).
+
+        Sections specs : Vision & Objectifs → Risques & Dépendances
+        Sections build-time exclues : Documentation projet, CLAUDE.md, Journal de bord
+        """
+        template_path = os.path.join(
+            config.OBSIDIAN_VAULT_PATH, "Templates", "_template-projet.md"
+        )
+        try:
+            with open(template_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Extract body (after frontmatter)
+            parts = content.split('---', 2)
+            body = parts[2].strip() if len(parts) >= 3 else content
+            # Cut before build-time sections
+            for marker in ['## Documentation projet', '## CLAUDE.md', '## Journal de bord']:
+                idx = body.find(marker)
+                if idx > 0:
+                    body = body[:idx].rstrip()
+                    break
+            # Remove the title line (# {{titre}}) and pitch placeholder
+            lines = body.split('\n')
+            cleaned = []
+            for line in lines:
+                if line.strip().startswith('# {{titre}}'):
+                    continue
+                if line.strip() == '> Pitch en une phrase.':
+                    continue
+                cleaned.append(line)
+            return '\n'.join(cleaned).strip()
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Template projet introuvable : {template_path}")
+            return ""
+
     def request_synthesis(self) -> Optional[str]:
         """Demande une synthèse à l'orchestrateur (Cloclo) via OpenClaw.
 
@@ -262,18 +317,21 @@ statut: brouillon
         cloclo = self.synthesis_agent
         agent_names = ', '.join(f'{a.emoji} {a.name}' for a in self.agents)
 
+        skeleton = self.load_specs_skeleton()
+
         trigger = (
             f"{cloclo.mention}\n\n"
             f"🎯 **Synthèse demandée**\n\n"
             f"La discussion entre {agent_names} est terminée ({sum(self.message_counts.values())} messages).\n\n"
-            f"Produis un document de specs structuré avec :\n"
-            f"1. **Résumé exécutif** (3-5 lignes)\n"
-            f"2. **Architecture proposée**\n"
-            f"3. **Fonctionnalités clés** (priorisées)\n"
-            f"4. **Stack technique recommandée**\n"
-            f"5. **Risques identifiés**\n"
-            f"6. **Plan d'action** (étapes concrètes)\n\n"
-            f"Base-toi sur la conversation ci-dessus. Sois concis et actionnable."
+            f"Tu dois produire les specs du projet en remplissant **exactement** la structure ci-dessous.\n"
+            f"Chaque section doit être remplie avec les conclusions concrètes de la discussion.\n"
+            f"Si une section n'a pas été abordée, laisse-la avec `<!-- À compléter en phase de cadrage -->`.\n"
+            f"Ne supprime aucune section. Ne change pas les titres. Remplis les tableaux, les listes, les descriptions.\n\n"
+            f"**Structure à remplir :**\n\n"
+            f"{skeleton}\n\n"
+            f"---\n"
+            f"Remplis maintenant chaque section ci-dessus avec le contenu issu de la conversation. "
+            f"Sois concis, actionnable, et concret."
         )
 
         trigger_post = self.admin_client.create_post(self.channel_id, trigger)
@@ -333,6 +391,8 @@ statut: brouillon
             f"- Tu ne réagis **JAMAIS** aux messages des autres agents sauf si tu es @mentionné\n"
             f"- Tu respectes ton compteur de messages — quand ton budget est épuisé, tu te tais\n"
             f"- Tu ne modifies **AUCUNE** note Obsidian pendant cette session\n"
+            f"- Tu ne fais **AUCUNE** référence à d'autres projets existants — cette session concerne UNIQUEMENT l'idée ci-dessus\n"
+            f"- Tu n'utilises **PAS** jcodemunch ni aucun outil de navigation de code — tu travailles uniquement à partir de l'idée fournie\n"
             f"- L'orchestrateur gère les tours de parole. Attends ton tour.\n"
         )
         self.admin_client.create_post(self.channel_id, kickoff)
@@ -409,8 +469,8 @@ def main():
                              help="Recherche par nom (ex: 'agent-de-trading')")
 
     parser.add_argument("--agents", "-a", nargs=3,
-                        default=["winston", "amelia", "manolo"],
-                        help="3 agent IDs (default: winston amelia manolo)")
+                        default=["winston", "amelia", "walid"],
+                        help="3 agent IDs (default: winston amelia walid)")
     parser.add_argument("--budget", "-b", type=int, default=None,
                         help=f"Messages par agent (default: {config.PIPELINE_BUDGET_PER_AGENT})")
     parser.add_argument("--dry-run", action="store_true",

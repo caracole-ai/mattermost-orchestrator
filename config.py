@@ -11,7 +11,7 @@ API_BASE = f"{MATTERMOST_URL}/api/v4"
 # Tokens (à remplir après création des bots)
 ADMIN_TOKEN = os.getenv("MATTERMOST_ADMIN_TOKEN", "")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
-TEAM_ID = os.getenv("MATTERMOST_TEAM_ID", "i5a897fmgj8ntqkkt5iy9q8hfr")
+TEAM_ID = os.getenv("MATTERMOST_TEAM_ID", "kwhwcabzet8rmpguc79ttxwrsy")
 
 # Paths
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "/Users/caracole/Documents/ObsidianVault")
